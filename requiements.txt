@@ -2,8 +2,7 @@ streamlit
 streamlit-drawable-canvas
 streamlit-image-coordinates
 reportlab
-pymupdf==1.25.3
-frontend
+pymupdf
 Pillow
 openpyxl
 pandas
