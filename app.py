@@ -5,9 +5,6 @@ import zipfile
 from datetime import date, datetime, timedelta
 from PIL import Image, ImageDraw
 import numpy as np
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 import pandas as pd
 import qrcode
 import streamlit as st
@@ -28,7 +25,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Sichere optionale Imports für Cloud-Umgebungen (verhindert Abstürze)
+# Optionale Imports sicher abfangen, damit die Cloud-App nicht abstürzt
 try:
   import fitz  # PyMuPDF
   HAS_FITZ = True
@@ -40,6 +37,14 @@ try:
   HAS_CV2 = True
 except ImportError:
   HAS_CV2 = False
+
+try:
+  import openpyxl
+  from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+  from openpyxl.utils import get_column_letter
+  HAS_EXCEL = True
+except ImportError:
+  HAS_EXCEL = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -687,6 +692,8 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
 
 # --- EXCEL GENERATOR ---
 def generate_excel_export(property_id=None):
+  if not HAS_EXCEL:
+    return None
   conn = get_db()
   wb = openpyxl.Workbook()
 
@@ -3318,38 +3325,44 @@ elif menu == "💾 Daten-Export & Datensicherung":
 
   with tab_exp:
     st.markdown("#### Strukturierter Excel-Export")
-    properties = conn.execute("SELECT * FROM properties").fetchall()
-
-    if not properties:
-      st.warning("Keine Objekte vorhanden.")
+    if not HAS_EXCEL:
+      st.error(
+          "⚠️ Das Paket `openpyxl` ist in dieser Cloud-Umgebung nicht aktiv."
+          " Nutze stattdessen den ZIP-Backup-Export."
+      )
     else:
-      prop_dict = {"Alle Objekte (Gesamtexport)": None}
-      for p in properties:
-        prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
+      properties = conn.execute("SELECT * FROM properties").fetchall()
 
-      sel_p_label = st.selectbox(
-          "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
-      )
-      target_pid = prop_dict[sel_p_label]
+      if not properties:
+        st.warning("Keine Objekte vorhanden.")
+      else:
+        prop_dict = {"Alle Objekte (Gesamtexport)": None}
+        for p in properties:
+          prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
 
-      excel_data = generate_excel_export(target_pid)
-      file_name_suffix = (
-          "Gesamtexport"
-          if target_pid is None
-          else sel_p_label.split(" ")[0].replace("/", "_")
-      )
+        sel_p_label = st.selectbox(
+            "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
+        )
+        target_pid = prop_dict[sel_p_label]
 
-      st.download_button(
-          label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
-          data=excel_data,
-          file_name=(
-              f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
-          ),
-          mime=(
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          ),
-          type="primary",
-      )
+        excel_data = generate_excel_export(target_pid)
+        file_name_suffix = (
+            "Gesamtexport"
+            if target_pid is None
+            else sel_p_label.split(" ")[0].replace("/", "_")
+        )
+
+        st.download_button(
+            label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
+            data=excel_data,
+            file_name=(
+                f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
+            ),
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            type="primary",
+        )
 
   with tab_bak:
     st.markdown("#### 1-Klick-Vollsicherung herunterladen")
