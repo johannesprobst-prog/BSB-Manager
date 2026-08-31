@@ -6,7 +6,6 @@ from datetime import date, datetime, timedelta
 from PIL import Image, ImageDraw
 import numpy as np
 import pandas as pd
-import qrcode
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
@@ -25,7 +24,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Optionale Imports sicher abfangen, damit die Cloud-App nicht abstürzt
+# Optionale Imports sicher abfangen, damit die Cloud-App niemals abstürzt
 try:
   import fitz  # PyMuPDF
   HAS_FITZ = True
@@ -45,6 +44,12 @@ try:
   HAS_EXCEL = True
 except ImportError:
   HAS_EXCEL = False
+
+try:
+  import qrcode
+  HAS_QR = True
+except ImportError:
+  HAS_QR = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -505,7 +510,7 @@ def generate_annual_report_pdf(property_id, report_year, bsb_summary_text):
 
   elements.append(
       Paragraph(
-          "3. Gesamtbeurteilung des baulichen & organisatorischen"
+          "3. Gesamtbeurteilung du baulichen & organisatorischen"
           " Brandschutzes",
           h2_style,
       )
@@ -612,21 +617,24 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
   label_cells = []
 
   for f in facilities:
-    qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=4,
-        border=1,
-    )
-    qr.add_data(qr_payload)
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
+    if HAS_QR:
+      qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
+      qr = qrcode.QRCode(
+          version=1,
+          error_correction=qrcode.constants.ERROR_CORRECT_M,
+          box_size=4,
+          border=1,
+      )
+      qr.add_data(qr_payload)
+      qr.make(fit=True)
+      qr_img = qr.make_image(fill_color="black", back_color="white")
 
-    qr_byte_arr = io.BytesIO()
-    qr_img.save(qr_byte_arr, format="PNG")
-    qr_byte_arr.seek(0)
-    rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
+      qr_byte_arr = io.BytesIO()
+      qr_img.save(qr_byte_arr, format="PNG")
+      qr_byte_arr.seek(0)
+      rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
+    else:
+      rl_qr = Paragraph("<b>[QR]</b>", label_text_style)
 
     frist_str = (
         f"Prüfung: {f['next_inspection']}"
