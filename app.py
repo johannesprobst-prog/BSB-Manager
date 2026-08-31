@@ -8,25 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import qrcode
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import (
-    Image as RLImage,
-    KeepTogether,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
-
-import fitz  # PyMuPDF für PDF-Pläne
-
-# Alle potenziellen Cloud-Pakete sicher absichern
+# --- UNTERSTÜTZENDE PAKETE SICHER ABSICHERN ---
 try:
   from streamlit_drawable_canvas import st_canvas
   HAS_CANVAS = True
@@ -46,6 +28,32 @@ try:
   HAS_EXCEL = True
 except ImportError:
   HAS_EXCEL = False
+
+try:
+  import qrcode
+  HAS_QR = True
+except ImportError:
+  HAS_QR = False
+
+try:
+  import fitz  # PyMuPDF für PDF-Pläne
+  HAS_FITZ = True
+except ImportError:
+  HAS_FITZ = False
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    Image as RLImage,
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -598,21 +606,24 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
   label_cells = []
 
   for f in facilities:
-    qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=4,
-        border=1,
-    )
-    qr.add_data(qr_payload)
-    qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
+    if HAS_QR:
+      qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
+      qr = qrcode.QRCode(
+          version=1,
+          error_correction=qrcode.constants.ERROR_CORRECT_M,
+          box_size=4,
+          border=1,
+      )
+      qr.add_data(qr_payload)
+      qr.make(fit=True)
+      qr_img = qr.make_image(fill_color="black", back_color="white")
 
-    qr_byte_arr = io.BytesIO()
-    qr_img.save(qr_byte_arr, format="PNG")
-    qr_byte_arr.seek(0)
-    rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
+      qr_byte_arr = io.BytesIO()
+      qr_img.save(qr_byte_arr, format="PNG")
+      qr_byte_arr.seek(0)
+      rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
+    else:
+      rl_qr = Paragraph("<b>[QR]</b>", label_text_style)
 
     frist_str = (
         f"Prüfung: {f['next_inspection']}"
@@ -1395,9 +1406,8 @@ def generate_combined_pdf(run_id):
   s_table = Table(sign_data, colWidths=[90 * mm, 90 * mm])
   s_table.setStyle(
       TableStyle([
-          ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+          ("VALIGN", (0, 0), (-1, -1), "TOP"),
           ("LEFTPADDING", (0, 0), (-1, -1), 0),
-          ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
       ])
   )
   elements.append(s_table)
@@ -2694,7 +2704,7 @@ elif menu == "🛠️ Handwerker- & Mängelauftrag":
     ).fetchall()
 
     if not defects:
-      st.success("🎉 Keine offenen Mängel für diesen Objekt vorhanden!")
+      st.success("🎉 Keine offenen Mängel für dieses Objekt vorhanden!")
     else:
       st.info(f"Es liegen **{len(defects)} offene Mängel** vor.")
 
@@ -3176,7 +3186,7 @@ elif menu == "💾 Daten-Export & Datensicherung":
     st.markdown("#### Strukturierter Excel-Export")
     if not HAS_EXCEL:
       st.error(
-          "⚠️ Das Paket `openpyxl` ist nicht aktiv. Nutze den ZIP-Backup-Export."
+          "⚠️ Das Paket `openpyxl` ist in dieser Cloud-Umgebung nicht aktiv."
       )
     else:
       properties = conn.execute("SELECT * FROM properties").fetchall()
@@ -3439,18 +3449,25 @@ elif menu == "Pläne & Objekte verwalten":
 
         if st.form_submit_button("Plan speichern", type="primary"):
           if plan_name and plan_file:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_ext = os.path.splitext(plan_file.name)[1].lower()
 
             if file_ext == ".pdf":
               pdf_bytes = plan_file.read()
-              doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-              page = doc.load_page(0)
-              pix = page.get_pixmap(dpi=200)
-              saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
-              full_path = os.path.join(UPLOAD_DIR, saved_filename)
-              pix.save(full_path)
-              doc.close()
+              if HAS_FITZ:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                page = doc.load_page(0)
+                pix = page.get_pixmap(dpi=200)
+                saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
+                full_path = os.path.join(UPLOAD_DIR, saved_filename)
+                pix.save(full_path)
+                doc.close()
+              else:
+                st.error(
+                    "PDF-Rendering in dieser Umgebung nicht aktiv. Bitte lade"
+                    " den Plan als PNG- oder JPG-Bild hoch."
+                )
+                st.stop()
             else:
               saved_filename = f"plan_{target_prop_id}_{timestamp}{file_ext}"
               full_path = os.path.join(UPLOAD_DIR, saved_filename)
