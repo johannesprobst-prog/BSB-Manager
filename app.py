@@ -7,7 +7,6 @@ from PIL import Image, ImageDraw
 import numpy as np
 import pandas as pd
 import streamlit as st
-from streamlit_image_coordinates import streamlit_image_coordinates
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -30,12 +29,18 @@ from reportlab.platypus import (
 
 import fitz  # PyMuPDF für PDF-Pläne
 
-# Canvas-Import für Unterschriften absichern
+# UI-Erweiterungen (Canvas & Koordinaten) sicher absichern
 try:
   from streamlit_drawable_canvas import st_canvas
   HAS_CANVAS = True
 except ImportError:
   HAS_CANVAS = False
+
+try:
+  from streamlit_image_coordinates import streamlit_image_coordinates
+  HAS_COORDS = True
+except ImportError:
+  HAS_COORDS = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -1687,9 +1692,16 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
               f"📍 Klicke auf den Plan: **Freie Fläche = Neuer Farbpunkt** |"
               f" **Bestehender Punkt = Bearbeiten/Löschen**"
           )
-          edit_coords = streamlit_image_coordinates(
-              d_img, key=f"edit_coords_{selected_plan_id}"
-          )
+          if HAS_COORDS:
+            edit_coords = streamlit_image_coordinates(
+                d_img, key=f"edit_coords_{selected_plan_id}"
+            )
+          else:
+            st.error(
+                "Koordinaten-Erweiterung (`streamlit-image-coordinates`) nicht"
+                " aktiv."
+            )
+            edit_coords = None
 
         with col_plan_form:
           st.markdown("#### Einrichtung konfigurieren")
@@ -2080,9 +2092,13 @@ elif menu == "Aktive Begehung & Planprüfung":
                   f"📍 Plan: **{selected_plan_name}** (🟢 Gültig/Dauerhaft | 🟡"
                   " <60 Tage | 🔴 Mangel/Überfällig)"
               )
-              coords = streamlit_image_coordinates(
-                  d_img, key=f"pin_run_{run_id}_{selected_plan_id}"
-              )
+              if HAS_COORDS:
+                coords = streamlit_image_coordinates(
+                    d_img, key=f"pin_run_{run_id}_{selected_plan_id}"
+                )
+              else:
+                st.error("Koordinaten-Modul nicht aktiv.")
+                coords = None
 
             with col_f:
               st.markdown("#### Punkt prüfen / Mangel aufnehmen")
@@ -2304,9 +2320,7 @@ elif menu == "Aktive Begehung & Planprüfung":
       with tab_sign:
         st.markdown("### Digitale Unterschrift & Abschluss")
         if not HAS_CANVAS:
-          st.error(
-              "⚠️ Unterschriften-Canvas ist in dieser Umgebung nicht aktiv."
-          )
+          st.error("⚠️ Unterschriften-Canvas nicht aktiv.")
         else:
           col_sig1, col_sig2 = st.columns(2)
 
@@ -2417,10 +2431,7 @@ elif menu == "Aktive Begehung & Planprüfung":
 # ----------------------------------------------------
 elif menu == "📷 Live-Kamera QR-Scanner":
   st.subheader("📷 Live-Kamera QR-Code-Scanner")
-  st.info(
-      "Der Live-Kamera-Scan wurde für den Online-Betrieb optimiert."
-      " Barcodes/QR-Codes können in Kataster & Begehung erfasst werden."
-  )
+  st.info("Funktion im Web-Betrieb optimiert.")
 
 
 # ----------------------------------------------------
