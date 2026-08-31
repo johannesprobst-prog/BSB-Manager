@@ -5,7 +5,6 @@ import zipfile
 from datetime import date, datetime, timedelta
 from PIL import Image, ImageDraw
 import numpy as np
-import cv2
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -29,12 +28,18 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Sicherer Import für PyMuPDF (fitz) bei Cloud-Umgebungen
+# Sichere optionale Imports für Cloud-Umgebungen (verhindert Abstürze)
 try:
   import fitz  # PyMuPDF
   HAS_FITZ = True
 except ImportError:
   HAS_FITZ = False
+
+try:
+  import cv2
+  HAS_CV2 = True
+except ImportError:
+  HAS_CV2 = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -247,6 +252,8 @@ def draw_color_dot(
 
 
 def decode_qr_image(image_bytes):
+  if not HAS_CV2:
+    return None
   try:
     file_bytes = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -2418,151 +2425,162 @@ elif menu == "Aktive Begehung & Planprüfung":
 # ----------------------------------------------------
 elif menu == "📷 Live-Kamera QR-Scanner":
   st.subheader("📷 Live-Kamera QR-Code-Scanner")
-  st.caption(
-      "Scanne einen QR-Code-Aufkleber direkt mit der Smartphone-, Tablet- oder"
-      " Laptop-Kamera, um das Gerät sofort zu prüfen oder einen Mangel"
-      " festzuhalten."
-  )
+  if not HAS_CV2:
+    st.error(
+        "⚠️ Das OpenCV-Paket (`cv2`) ist in dieser Cloud-Umgebung nicht aktiv."
+        " Bitte nutze die reguläre Begehung oder erfasse Mängel über das"
+        " Kataster."
+    )
+  else:
+    st.caption(
+        "Scanne einen QR-Code-Aufkleber direkt mit der Smartphone-, Tablet-"
+        " oder Laptop-Kamera, um das Gerät sofort zu prüfen oder einen Mangel"
+        " festzuhalten."
+    )
 
-  cam_img = st.camera_input("Kamera auf den QR-Code am Gerät richten:")
+    cam_img = st.camera_input("Kamera auf den QR-Code am Gerät richten:")
 
-  if cam_img is not None:
-    qr_data = decode_qr_image(cam_img.getvalue())
+    if cam_img is not None:
+      qr_data = decode_qr_image(cam_img.getvalue())
 
-    if qr_data and qr_data.startswith("BSB-GERAET|"):
-      parts = dict(
-          item.split(":", 1)
-          for item in qr_data.split("|")[1:]
-          if ":" in item
-      )
-      fac_id = parts.get("ID")
+      if qr_data and qr_data.startswith("BSB-GERAET|"):
+        parts = dict(
+            item.split(":", 1)
+            for item in qr_data.split("|")[1:]
+            if ":" in item
+        )
+        fac_id = parts.get("ID")
 
-      if fac_id:
-        facility = conn.execute(
-            """
-                    SELECT f.*, p.name as prop_name, fp.name as plan_name 
-                    FROM fire_facilities f
-                    JOIN properties p ON f.property_id = p.id
-                    LEFT JOIN floor_plans fp ON f.floor_plan_id = fp.id
-                    WHERE f.id = ?
-                """,
-            (fac_id,),
-        ).fetchone()
+        if fac_id:
+          facility = conn.execute(
+              """
+                      SELECT f.*, p.name as prop_name, fp.name as plan_name 
+                      FROM fire_facilities f
+                      JOIN properties p ON f.property_id = p.id
+                      LEFT JOIN floor_plans fp ON f.floor_plan_id = fp.id
+                      WHERE f.id = ?
+                  """,
+              (fac_id,),
+          ).fetchone()
 
-        if facility:
-          st.success(
-              f"✅ **Erkannt: {facility['identifier']} ({facility['category']})**"
-              f" – Objekt: {facility['prop_name']}"
-          )
-
-          c1, c2 = st.columns([2, 2])
-          c1.write(f"**Standort:** {facility['location_desc']}")
-          c1.write(f"**Typ:** {facility['device_type'] or '-'}")
-          c1.write(f"**Plan:** {facility['plan_name'] or 'Nicht verortet'}")
-
-          c2.write(f"**Letzte Prüfung:** {facility['last_inspection']}")
-          c2.write(f"**Nächste Fälligkeit:** `{facility['next_inspection']}`")
-          c2.write(
-              f"**Status:**"
-              f" :{'red[MANGEL]' if facility['has_defect'] else 'green[GÜLTIG / I.O.]'}"
-          )
-
-          st.divider()
-          st.markdown("#### Sofort-Aktion für dieses Gerät:")
-
-          act_col1, act_col2 = st.columns(2)
-
-          with act_col1:
-            if facility["inspection_interval_months"] > 0:
-              if st.button(
-                  "🔄 Plakette erneuern (Prüffrist verlängern)",
-                  type="primary",
-                  key="cam_renew",
-              ):
-                new_l = date.today()
-                months = facility["inspection_interval_months"]
-                new_n = (
-                    new_l.replace(year=new_l.year + (months // 12))
-                    if months % 12 == 0
-                    else new_l + timedelta(days=months * 30)
-                )
-                conn.execute(
-                    """
-                                    UPDATE fire_facilities 
-                                    SET last_inspection = ?, next_inspection = ?, has_defect = 0 
-                                    WHERE id = ?
-                                """,
-                    (
-                        new_l.strftime("%Y-%m-%d"),
-                        new_n.strftime("%Y-%m-%d"),
-                        facility["id"],
-                    ),
-                )
-                conn.commit()
-                st.success(f"Prüfung aktualisiert bis: {new_n}")
-                st.rerun()
-            else:
-              if st.button(
-                  "✅ Sichtprüfung i.O. bestätigen",
-                  type="primary",
-                  key="cam_sicht",
-              ):
-                conn.execute(
-                    "UPDATE fire_facilities SET has_defect = 0 WHERE id = ?",
-                    (facility["id"],),
-                )
-                conn.commit()
-                st.success("Gerät in Ordnung!")
-                st.rerun()
-
-          with act_col2:
-            if facility["has_defect"]:
-              if st.button(
-                  "✅ Vorhandenen Mangel als behoben verbuchen", key="cam_fix"
-              ):
-                conn.execute(
-                    """
-                                    UPDATE fire_facilities 
-                                    SET has_defect = 0, defect_description = NULL 
-                                    WHERE id = ?
-                                """,
-                    (facility["id"],),
-                )
-                conn.commit()
-                st.success("Mangel behoben!")
-                st.rerun()
-
-          with st.form("cam_defect_form"):
-            st.markdown("##### ⚠️ Mangel für dieses Gerät erfassen")
-            m_desc = st.text_input(
-                "Mangelbeschreibung",
-                placeholder="z.B. Löscher verstellt, Plombe fehlt, Tür klemmt",
+          if facility:
+            st.success(
+                f"✅ **Erkannt: {facility['identifier']} ({facility['category']})**"
+                f" – Objekt: {facility['prop_name']}"
             )
-            m_sev = st.selectbox("Dringlichkeit", ["MITTEL", "KRITISCH", "GERING"])
-            m_due = st.date_input("Behebungsfrist", value=date.today())
 
-            if st.form_submit_button("Mangel sofort abspeichern"):
-              if m_desc:
-                conn.execute(
-                    """
-                                    UPDATE fire_facilities 
-                                    SET has_defect = 1, defect_description = ?, defect_severity = ?, defect_due_date = ?
-                                    WHERE id = ?
-                                """,
-                    (m_desc, m_sev, m_due, facility["id"]),
-                )
-                conn.commit()
-                st.success("Mangel am Gerät hinterlegt!")
-                st.rerun()
+            c1, c2 = st.columns([2, 2])
+            c1.write(f"**Standort:** {facility['location_desc']}")
+            c1.write(f"**Typ:** {facility['device_type'] or '-'}")
+            c1.write(f"**Plan:** {facility['plan_name'] or 'Nicht verortet'}")
+
+            c2.write(f"**Letzte Prüfung:** {facility['last_inspection']}")
+            c2.write(f"**Nächste Fälligkeit:** `{facility['next_inspection']}`")
+            c2.write(
+                f"**Status:**"
+                f" :{'red[MANGEL]' if facility['has_defect'] else 'green[GÜLTIG / I.O.]'}"
+            )
+
+            st.divider()
+            st.markdown("#### Sofort-Aktion für dieses Gerät:")
+
+            act_col1, act_col2 = st.columns(2)
+
+            with act_col1:
+              if facility["inspection_interval_months"] > 0:
+                if st.button(
+                    "🔄 Plakette erneuern (Prüffrist verlängern)",
+                    type="primary",
+                    key="cam_renew",
+                ):
+                  new_l = date.today()
+                  months = facility["inspection_interval_months"]
+                  new_n = (
+                      new_l.replace(year=new_l.year + (months // 12))
+                      if months % 12 == 0
+                      else new_l + timedelta(days=months * 30)
+                  )
+                  conn.execute(
+                      """
+                                      UPDATE fire_facilities 
+                                      SET last_inspection = ?, next_inspection = ?, has_defect = 0 
+                                      WHERE id = ?
+                                  """,
+                      (
+                          new_l.strftime("%Y-%m-%d"),
+                          new_n.strftime("%Y-%m-%d"),
+                          facility["id"],
+                      ),
+                  )
+                  conn.commit()
+                  st.success(f"Prüfung aktualisiert bis: {new_n}")
+                  st.rerun()
               else:
-                st.error("Bitte Mangelbeschreibung eingeben.")
-        else:
-          st.error("Geräte-ID aus dem QR-Code nicht in der Datenbank gefunden.")
-    else:
-      st.warning(
-          "Kein gültiger BSB-QR-Code erkannt. Bitte die Kamera ruhig auf das"
-          " Etikett halten."
-      )
+                if st.button(
+                    "✅ Sichtprüfung i.O. bestätigen",
+                    type="primary",
+                    key="cam_sicht",
+                ):
+                  conn.execute(
+                      "UPDATE fire_facilities SET has_defect = 0 WHERE id = ?",
+                      (facility["id"],),
+                  )
+                  conn.commit()
+                  st.success("Gerät in Ordnung!")
+                  st.rerun()
+
+            with act_col2:
+              if facility["has_defect"]:
+                if st.button(
+                    "✅ Vorhandenen Mangel als behoben verbuchen", key="cam_fix"
+                ):
+                  conn.execute(
+                      """
+                                      UPDATE fire_facilities 
+                                      SET has_defect = 0, defect_description = NULL 
+                                      WHERE id = ?
+                                  """,
+                      (facility["id"],),
+                  )
+                  conn.commit()
+                  st.success("Mangel behoben!")
+                  st.rerun()
+
+            with st.form("cam_defect_form"):
+              st.markdown("##### ⚠️ Mangel für dieses Gerät erfassen")
+              m_desc = st.text_input(
+                  "Mangelbeschreibung",
+                  placeholder="z.B. Löscher verstellt, Plombe fehlt, Tür klemmt",
+              )
+              m_sev = st.selectbox(
+                  "Dringlichkeit", ["MITTEL", "KRITISCH", "GERING"]
+              )
+              m_due = st.date_input("Behebungsfrist", value=date.today())
+
+              if st.form_submit_button("Mangel sofort abspeichern"):
+                if m_desc:
+                  conn.execute(
+                      """
+                                      UPDATE fire_facilities 
+                                      SET has_defect = 1, defect_description = ?, defect_severity = ?, defect_due_date = ?
+                                      WHERE id = ?
+                                  """,
+                      (m_desc, m_sev, m_due, facility["id"]),
+                  )
+                  conn.commit()
+                  st.success("Mangel am Gerät hinterlegt!")
+                  st.rerun()
+                else:
+                  st.error("Bitte Mangelbeschreibung eingeben.")
+          else:
+            st.error(
+                "Geräte-ID aus dem QR-Code nicht in der Datenbank gefunden."
+            )
+      else:
+        st.warning(
+            "Kein gültiger BSB-QR-Code erkannt. Bitte die Kamera ruhig auf das"
+            " Etikett halten."
+        )
 
 
 # ----------------------------------------------------
@@ -3421,7 +3439,7 @@ elif menu == "Brandschutzbuch-Historie":
 
 
 # ----------------------------------------------------
-# 11. PLÄNE & OBJEKTE VERWALTEN (SICHERES KASKADIERENDES LÖSCHEN)
+# 11. PLÄNE & OBJEKTE VERWALTEN
 # ----------------------------------------------------
 elif menu == "Pläne & Objekte verwalten":
   tab_p1, tab_p2, tab_p3 = st.tabs([
