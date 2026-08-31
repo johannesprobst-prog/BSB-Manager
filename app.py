@@ -8,13 +8,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# Grundlegende UI-Erweiterungen (optional, stürzen nie ab)
-try:
-  from streamlit_drawable_canvas import st_canvas
-  HAS_CANVAS = True
-except ImportError:
-  HAS_CANVAS = False
-
+# Optionale sichere Imports für Zusatzfunktionen
 try:
   import openpyxl
   from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -146,46 +140,11 @@ def init_db():
             "Gänge, Notausgänge und Treppenhäuser kontrollieren.",
         ),
         (
-            "FLUECHTWEGE",
-            "TRVB 117 O",
-            "MONATLICH",
-            "Notausgänge leicht öffenbar und unversperrt",
-            "Panikbeschläge und Verriegelungen testen.",
-        ),
-        (
-            "BMA",
-            "TRVB 123 S",
-            "MONATLICH",
-            "BMZ im Normalbetrieb & Meldertest",
-            "Probeauslösung eines automatischen Melders.",
-        ),
-        (
-            "TUEREN",
-            "TRVB 148 S",
-            "MONATLICH",
-            "Brandschutztüren schließen einwandfrei",
-            "Selbstschließung und Dichtungen prüfen.",
-        ),
-        (
             "LOESCHER",
             "TRVB 124 S",
             "MONATLICH",
             "Feuerlöscher zugänglich & Prüffrist gültig",
             "Plombe intakt, Manometer grün, Prüfplakette gültig.",
-        ),
-        (
-            "RWA",
-            "TRVB 125 S",
-            "MONATLICH",
-            "Auslöseeinrichtungen & Manometer geprüft",
-            "Optische Prüfung der Handauslöser und Druckbehälter.",
-        ),
-        (
-            "NOTLICHT",
-            "TRVB 117 O",
-            "MONATLICH",
-            "Sicherheitsbeleuchtung Funktionstest",
-            "Optische Prüfung der Betriebsbereitschaft.",
         ),
     ]
     cursor.executemany(
@@ -229,7 +188,7 @@ def create_full_backup_zip():
   return zip_buffer.getvalue()
 
 
-# --- Streamlit Navigation ---
+# --- STREAMLIT BENUTZEROBERFLÄCHE ---
 st.set_page_config(
     page_title="BSB Manager TRVB 117 O", layout="wide", page_icon="🧯"
 )
@@ -240,14 +199,10 @@ menu = st.sidebar.radio(
     [
         "🎨 Objektpläne & Kataster bearbeiten",
         "Aktive Begehung & Planprüfung",
-        "📷 Live-Kamera QR-Scanner",
         "Anlagenkataster & Fristen",
         "🏷️ QR-Code Etikettendruck",
-        "🛠️ Handwerker- & Mängelauftrag",
         "🚨 Ereignisjournal (TRVB 117 O)",
-        "📊 BSB-Jahresbericht (TRVB 117 O)",
         "💾 Daten-Export & Datensicherung",
-        "Brandschutzbuch-Historie",
         "Pläne & Objekte verwalten",
     ],
 )
@@ -255,7 +210,7 @@ conn = get_db()
 
 
 # ----------------------------------------------------
-# 1. OBJEKTPLÄNE & KATASTER BEARBEITEN (ROBUSTE SLIDER FÜR PINS)
+# 1. OBJEKTPLÄNE & KATASTER BEARBEITEN (PINS PLATZIEREN)
 # ----------------------------------------------------
 if menu == "🎨 Objektpläne & Kataster bearbeiten":
   st.subheader("🎨 Objektpläne bearbeiten & Einrichtungen platzieren")
@@ -283,7 +238,7 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
     else:
       plan_dict = {pl["name"]: pl["id"] for pl in plans}
       selected_plan_name = st.selectbox(
-          "Geschossplan zum Bearbeiten auswählen",
+          "Geschossplan auswählen",
           list(plan_dict.keys()),
           key="edit_plan_select",
       )
@@ -335,8 +290,7 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
         with col_plan_form:
           st.markdown("#### 📍 Gerät auf Plan positionieren")
           st.caption(
-              "Nutze die Prozent-Schieberegler, um den Pin exakt auf dem Plan"
-              " zu platzieren (0% = Oben/Links, 100% = Unten/Rechts)."
+              "Platziere den Pin per Prozent-Schieberegler exakt auf dem Plan."
           )
 
           with st.form("new_fac_slider_form", clear_on_submit=True):
@@ -399,7 +353,9 @@ elif menu == "Aktive Begehung & Planprüfung":
   st.subheader("🚀 Aktive Begehung & Checkliste")
   properties = conn.execute("SELECT * FROM properties").fetchall()
   if not properties:
-    st.warning("Bitte zuerst ein Objekt anlegen.")
+    st.warning(
+        "Bitte zuerst ein Objekt unter 'Pläne & Objekte verwalten' anlegen."
+    )
   else:
     prop_dict = {f"{p['name']} ({p['address']})": p["id"] for p in properties}
     selected_prop_label = st.selectbox(
@@ -407,7 +363,7 @@ elif menu == "Aktive Begehung & Planprüfung":
     )
     selected_prop_id = prop_dict[selected_prop_label]
 
-    if st.button("🚀 Begehung starten", type="primary"):
+    if st.button("🚀 Begehung starten & dokumentieren", type="primary"):
       cur = conn.cursor()
       cur.execute(
           """
@@ -421,15 +377,7 @@ elif menu == "Aktive Begehung & Planprüfung":
 
 
 # ----------------------------------------------------
-# 3. LIVE-KAMERA
-# ----------------------------------------------------
-elif menu == "📷 Live-Kamera QR-Scanner":
-  st.subheader("📷 Live-Kamera QR-Code-Scanner")
-  st.info("QR-Scanner im Web-Modus aktiv.")
-
-
-# ----------------------------------------------------
-# 4. ANLAGENKATASTER
+# 3. ANLAGENKATASTER
 # ----------------------------------------------------
 elif menu == "Anlagenkataster & Fristen":
   st.subheader("Anlagenkataster & Fristen")
@@ -445,23 +393,17 @@ elif menu == "Anlagenkataster & Fristen":
 
 
 # ----------------------------------------------------
-# 5. ETIKETTENDRUCK
+# 4. ETIKETTENDRUCK
 # ----------------------------------------------------
 elif menu == "🏷️ QR-Code Etikettendruck":
   st.subheader("🏷️ QR-Code Etikettendruck")
-  st.info("Verfügbar im Kataster.")
+  st.info(
+      "Etiketten und QR-Datenverwaltung sind im Kataster integriert."
+  )
 
 
 # ----------------------------------------------------
-# 6. HANDWERKERAUFTRAG
-# ----------------------------------------------------
-elif menu == "🛠️ Handwerker- & Mängelauftrag":
-  st.subheader("🛠️ Handwerker- & Mängelauftrag")
-  st.info("Keine offenen Mängel.")
-
-
-# ----------------------------------------------------
-# 7. EREIGNISJOURNAL
+# 5. EREIGNISJOURNAL
 # ----------------------------------------------------
 elif menu == "🚨 Ereignisjournal (TRVB 117 O)":
   st.subheader("🚨 Ereignisjournal (TRVB 117 O)")
@@ -471,15 +413,7 @@ elif menu == "🚨 Ereignisjournal (TRVB 117 O)":
 
 
 # ----------------------------------------------------
-# 8. BSB-JAHRESBERICHT
-# ----------------------------------------------------
-elif menu == "📊 BSB-Jahresbericht (TRVB 117 O)":
-  st.subheader("📊 BSB-Jahresbericht")
-  st.info("Management-Bericht verfügbar.")
-
-
-# ----------------------------------------------------
-# 9. DATEN-EXPORT
+# 6. DATEN-EXPORT
 # ----------------------------------------------------
 elif menu == "💾 Daten-Export & Datensicherung":
   st.subheader("💾 Daten-Export & Datensicherung")
@@ -494,19 +428,7 @@ elif menu == "💾 Daten-Export & Datensicherung":
 
 
 # ----------------------------------------------------
-# 10. HISTORIE
-# ----------------------------------------------------
-elif menu == "Brandschutzbuch-Historie":
-  st.subheader("Brandschutzbuch-Historie")
-  runs = conn.execute("SELECT * FROM inspection_runs").fetchall()
-  for r in runs:
-    st.write(
-        f"Prüfung am {r['inspection_date']} – Status: ` {r['status']} `"
-    )
-
-
-# ----------------------------------------------------
-# 11. PLÄNE & OBJEKTE VERWALTEN (BILD-UPLOAD OHNE PDF-FEHLER)
+# 7. PLÄNE & OBJEKTE VERWALTEN (HIER WIRD ANGELEGT & HOCHGELADEN)
 # ----------------------------------------------------
 elif menu == "Pläne & Objekte verwalten":
   tab_p1, tab_p2, tab_p3 = st.tabs([
@@ -528,7 +450,7 @@ elif menu == "Pläne & Objekte verwalten":
         )
 
   with tab_p2:
-    st.subheader("Grundrissplan als Bild hochladen (empfohlen: PNG oder JPG)")
+    st.subheader("Grundrissplan als Bild hochladen (PNG, JPG)")
     properties = conn.execute("SELECT * FROM properties").fetchall()
     if not properties:
       st.warning("Bitte zuerst unter Tab 3 ein Objekt anlegen.")
