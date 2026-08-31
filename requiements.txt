@@ -8,3 +8,4 @@ openpyxl
 pandas
 qrcode
 numpy
+opencv-python-headless
