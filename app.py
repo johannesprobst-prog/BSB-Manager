@@ -3,7 +3,6 @@ import os
 import sqlite3
 import zipfile
 from datetime import date, datetime, timedelta
-import fitz  # PyMuPDF
 from PIL import Image, ImageDraw
 import numpy as np
 import cv2
@@ -29,6 +28,13 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+
+# Sicherer Import für PyMuPDF (fitz) bei Cloud-Umgebungen
+try:
+  import fitz  # PyMuPDF
+  HAS_FITZ = True
+except ImportError:
+  HAS_FITZ = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -3424,7 +3430,6 @@ elif menu == "Pläne & Objekte verwalten":
       "➕ 3. Neues Objekt anlegen",
   ])
 
-  # --- TAB 1: OBJEKTE VERWALTEN & LÖSCHEN ---
   with tab_p1:
     st.subheader("Bestehende Objekte / Liegenschaften")
     properties = conn.execute("SELECT * FROM properties").fetchall()
@@ -3479,7 +3484,6 @@ elif menu == "Pläne & Objekte verwalten":
           ):
             prop_id = p["id"]
 
-            # 1. Bilddateien der Pläne von der Festplatte entfernen
             plans_to_del = conn.execute(
                 "SELECT image_path FROM floor_plans WHERE property_id = ?",
                 (prop_id,),
@@ -3491,7 +3495,6 @@ elif menu == "Pläne & Objekte verwalten":
                 except Exception:
                   pass
 
-            # 2. Alle verknüpften Untertabellen in richtiger Reihenfolge löschen
             runs_to_del = conn.execute(
                 "SELECT id FROM inspection_runs WHERE property_id = ?",
                 (prop_id,),
@@ -3525,13 +3528,11 @@ elif menu == "Pläne & Objekte verwalten":
                 "DELETE FROM floor_plans WHERE property_id = ?", (prop_id,)
             )
 
-            # 3. Hauptobjekt löschen
             conn.execute("DELETE FROM properties WHERE id = ?", (prop_id,))
             conn.commit()
             st.success(f"Objekt '{p['name']}' wurde vollständig gelöscht!")
             st.rerun()
 
-  # --- TAB 2: PLÄNE VERWALTEN & LÖSCHEN ---
   with tab_p2:
     st.subheader("1. Neuen Plan hochladen (PDF oder Bild)")
     properties = conn.execute("SELECT * FROM properties").fetchall()
@@ -3564,13 +3565,20 @@ elif menu == "Pläne & Objekte verwalten":
 
             if file_ext == ".pdf":
               pdf_bytes = plan_file.read()
-              doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-              page = doc.load_page(0)
-              pix = page.get_pixmap(dpi=200)
-              saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
-              full_path = os.path.join(UPLOAD_DIR, saved_filename)
-              pix.save(full_path)
-              doc.close()
+              if HAS_FITZ:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                page = doc.load_page(0)
+                pix = page.get_pixmap(dpi=200)
+                saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
+                full_path = os.path.join(UPLOAD_DIR, saved_filename)
+                pix.save(full_path)
+                doc.close()
+              else:
+                st.error(
+                    "PDF-Konvertierung in dieser Umgebung nicht aktiv. Bitte"
+                    " lade den Plan als PNG- oder JPG-Bild hoch."
+                )
+                st.stop()
             else:
               saved_filename = f"plan_{target_prop_id}_{timestamp}{file_ext}"
               full_path = os.path.join(UPLOAD_DIR, saved_filename)
@@ -3625,7 +3633,6 @@ elif menu == "Pläne & Objekte verwalten":
             st.warning(f"Plan '{pl['name']}' wurde gelöscht!")
             st.rerun()
 
-  # --- TAB 3: NEUES OBJEKT ANLEGEN ---
   with tab_p3:
     st.subheader("Neues Objekt anlegen")
     with st.form("new_prop"):
