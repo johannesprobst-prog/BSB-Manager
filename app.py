@@ -128,23 +128,6 @@ def init_db():
         FOREIGN KEY (inspection_run_id) REFERENCES inspection_runs(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS defects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        property_id INTEGER NOT NULL,
-        inspection_run_id INTEGER,
-        floor_plan_id INTEGER,
-        facility_category TEXT,
-        pin_x REAL,
-        pin_y REAL,
-        title TEXT NOT NULL,
-        description TEXT,
-        severity TEXT NOT NULL,
-        status TEXT DEFAULT 'OFFEN',
-        due_date DATE,
-        image_path TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS journal_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         property_id INTEGER NOT NULL,
@@ -222,15 +205,6 @@ def init_db():
         " interval, check_item, instruction) VALUES (?, ?, ?, ?, ?)",
         seed_items,
     )
-    cursor.execute(
-        "INSERT INTO properties (name, address, fire_safety_officer) VALUES"
-        " (?, ?, ?)",
-        (
-            "Musterbetrieb Werk 1",
-            "Musterstraße 1, 5134 Schwand",
-            "Johannes Probst",
-        ),
-    )
   conn.commit()
   conn.close()
 
@@ -251,28 +225,20 @@ def draw_color_dot(
     draw.text((x - 4, y - 6), str(label), fill="white")
 
 
-# --- ZIP BACKUP & RESTORE GENERATOR ---
 def create_full_backup_zip():
   zip_buffer = io.BytesIO()
   with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
     if os.path.exists(DB_FILE):
       zip_file.write(DB_FILE, arcname=DB_FILE)
-
     if os.path.exists(UPLOAD_DIR):
       for root, _, files in os.walk(UPLOAD_DIR):
         for file in files:
           file_path = os.path.join(root, file)
-          arcname = os.path.relpath(file_path, start=".")
-          zip_file.write(file_path, arcname=arcname)
-
+          zip_file.write(
+              file_path, arcname=os.path.relpath(file_path, start=".")
+          )
   zip_buffer.seek(0)
   return zip_buffer.getvalue()
-
-
-def restore_backup_from_zip(zip_bytes):
-  with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zip_file:
-    zip_file.extractall(".")
-  init_db()
 
 
 # --- Streamlit Navigation ---
@@ -301,7 +267,7 @@ conn = get_db()
 
 
 # ----------------------------------------------------
-# 1. OBJEKTPLÄNE & KATASTER BEARBEITEN
+# 1. OBJEKTPLÄNE & KATASTER BEARBEITEN (PINS SETZEN)
 # ----------------------------------------------------
 if menu == "🎨 Objektpläne & Kataster bearbeiten":
   st.subheader("🎨 Objektpläne bearbeiten & Einrichtungen platzieren")
@@ -340,7 +306,7 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
       ).fetchone()
       plan_img_path = curr_plan["image_path"]
 
-      if os.path.exists(plan_img_path):
+      if curr_plan and os.path.exists(plan_img_path):
         base_img = Image.open(plan_img_path).convert("RGBA")
         w, h = base_img.size
         tw = 950
@@ -372,7 +338,9 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
         col_plan_view, col_plan_form = st.columns([6.5, 3.5])
 
         with col_plan_view:
-          st.caption("📍 Klicke auf den Plan, um ein Gerät zu platzieren.")
+          st.caption(
+              "📍 Klicke auf eine Stelle im Plan, um einen Pin zu setzen."
+          )
           if HAS_COORDS:
             edit_coords = streamlit_image_coordinates(
                 d_img, key=f"edit_coords_{selected_plan_id}"
@@ -386,7 +354,7 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
           if edit_coords:
             px_val = round((edit_coords["x"] / tw) * 100, 2)
             py_val = round((edit_coords["y"] / th) * 100, 2)
-            st.success(f"Position X: {px_val}%, Y: {py_val}%")
+            st.success(f"Position erfasst (X: {px_val}%, Y: {py_val}%)")
 
             with st.form("new_fac_on_plan", clear_on_submit=True):
               cat = st.selectbox(
@@ -402,11 +370,15 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
                       "SONSTIGES",
                   ],
               )
-              ident = st.text_input("Gerätenummer / Kennung*")
-              loc = st.text_input("Standortbeschreibung*")
+              ident = st.text_input(
+                  "Gerätenummer / Kennung*", placeholder="z.B. L-01"
+              )
+              loc = st.text_input(
+                  "Standortbeschreibung*", placeholder="z.B. Flur Nord"
+              )
 
               if st.form_submit_button(
-                  "➕ Einrichtung hier platzieren", type="primary"
+                  "➕ Einrichtung hier speichern", type="primary"
               ):
                 if ident and loc:
                   conn.execute(
@@ -426,16 +398,24 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
                       ),
                   )
                   conn.commit()
-                  st.success(f"Einrichtung '{ident}' platziert!")
+                  st.success(f"Einrichtung '{ident}' erfolgreich platziert!")
                   st.rerun()
                 else:
                   st.error("Bitte Kennung und Standort ausfüllen.")
+          else:
+            st.info("Bitte klicke links auf den Grundriss.")
+      else:
+        st.warning(
+            "Die Bilddatei des Grundrisses wurde im Upload-Verzeichnis nicht"
+            " gefunden."
+        )
 
 
 # ----------------------------------------------------
-# 2. AKTIVE BEGEHUNG
+# 2. AKTIVE BEGEHUNG (VOLLSTÄNDIG)
 # ----------------------------------------------------
 elif menu == "Aktive Begehung & Planprüfung":
+  st.subheader("🚀 Aktive Begehung & Checkliste")
   properties = conn.execute("SELECT * FROM properties").fetchall()
   if not properties:
     st.warning(
@@ -448,17 +428,158 @@ elif menu == "Aktive Begehung & Planprüfung":
     )
     selected_prop_id = prop_dict[selected_prop_label]
 
-    if st.button("🚀 Begehung starten", type="primary"):
-      cur = conn.cursor()
-      cur.execute(
-          """
-                INSERT INTO inspection_runs (property_id, inspector_name, inspection_date, interval_scope, status)
-                VALUES (?, 'Johannes Probst', ?, 'MONATLICH', 'ABGESCHLOSSEN')
-            """,
-          (selected_prop_id, date.today()),
+    col_s1, col_s2, col_s3 = st.columns(3)
+    inspector = col_s1.text_input("Prüfer / BSB", value="Johannes Probst")
+    inspect_date = col_s2.date_input("Prüfdatum", value=date.today())
+    interval = col_s3.selectbox(
+        "Intervall",
+        ["MONATLICH", "WÖCHENTLICH", "QUARTAL", "HALBJÄHRLICH", "JÄHRLICH"],
+    )
+
+    if "active_run_id" not in st.session_state:
+      st.session_state["active_run_id"] = None
+
+    if st.session_state["active_run_id"] is None:
+      if st.button(
+          "🚀 Neue Begehung für dieses Objekt starten", type="primary"
+      ):
+        cur = conn.cursor()
+        cur.execute(
+            """
+                    INSERT INTO inspection_runs (property_id, inspector_name, inspection_date, interval_scope, status)
+                    VALUES (?, ?, ?, ?, 'IN_BEGEHUNG')
+                """,
+            (selected_prop_id, inspector, inspect_date, interval),
+        )
+        st.session_state["active_run_id"] = cur.lastrowid
+        conn.commit()
+        st.rerun()
+
+    if st.session_state["active_run_id"] is not None:
+      run_id = st.session_state["active_run_id"]
+      st.success(
+          f"🔴 **Begehung aktiv (Prüflauf #{run_id})** für {selected_prop_label}"
       )
-      conn.commit()
-      st.success("Begehung erfolgreich dokumentiert!")
+
+      tab_check, tab_sign = st.tabs([
+          "📋 1. TRVB-Prüfpunkte",
+          "✍️ 2. Digitale Unterschrift & Abschluss",
+      ])
+
+      with tab_check:
+        st.markdown("### TRVB 117 O Prüfpunkte kontrollieren")
+        templates = conn.execute(
+            "SELECT * FROM checklist_templates WHERE interval = ?", (interval,)
+        ).fetchall()
+        if not templates:
+          # Falls keine Templates da sind, Standard-Templates einfügen
+          default_tpls = [
+              (
+                  "FLUECHTWEGE",
+                  "TRVB 117 O",
+                  interval,
+                  "Fluchtwege frei von Brandlasten",
+                  "Kontrollieren",
+              ),
+              (
+                  "LOESCHER",
+                  "TRVB 124 S",
+                  interval,
+                  "Feuerlöscher zugänglich & Prüffrist gültig",
+                  "Prüfen",
+              ),
+          ]
+          conn.executemany(
+              "INSERT INTO checklist_templates (facility_category, trvb_ref,"
+              " interval, check_item, instruction) VALUES (?, ?, ?, ?, ?)",
+              default_tpls,
+          )
+          conn.commit()
+          templates = conn.execute(
+              "SELECT * FROM checklist_templates WHERE interval = ?",
+              (interval,),
+          ).fetchall()
+
+        results = {}
+        remarks = {}
+        for t in templates:
+          st.write(
+              f"**{t['facility_category']}** | *{t['trvb_ref']}*:"
+              f" {t['check_item']}"
+          )
+          r1, r2 = st.columns([1, 3])
+          results[t["id"]] = r1.radio(
+              "Status",
+              ["OK", "MANGEL", "N/A"],
+              key=f"chk_{run_id}_{t['id']}",
+              horizontal=True,
+          )
+          remarks[t["id"]] = r2.text_input(
+              "Bemerkung", key=f"rem_{run_id}_{t['id']}"
+          )
+          st.divider()
+
+        if st.button("💾 Ergebnisse speichern"):
+          cur = conn.cursor()
+          cur.execute(
+              "DELETE FROM inspection_results WHERE inspection_run_id = ?",
+              (run_id,),
+          )
+          for t_id, res in results.items():
+            cur.execute(
+                """
+                        INSERT INTO inspection_results (inspection_run_id, checklist_template_id, result_status, remark)
+                        VALUES (?, ?, ?, ?)
+                    """,
+                (run_id, t_id, res, remarks.get(t_id, "")),
+            )
+          conn.commit()
+          st.success(
+              "Prüfpunkte gespeichert! Gehe zu Tab 2 für den Abschluss."
+          )
+
+      with tab_sign:
+        st.markdown("### Abschluss & Signatur")
+        if HAS_CANVAS:
+          col_s1, col_s2 = st.columns(2)
+          with col_s1:
+            st.write("Unterschrift BSB")
+            canvas_bsb = st_canvas(
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#F8FAFC",
+                height=120,
+                width=300,
+                key=f"c_bsb_{run_id}",
+            )
+          with col_s2:
+            st.write("Unterschrift Betriebsleitung")
+            canvas_mgmt = st_canvas(
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#F8FAFC",
+                height=120,
+                width=300,
+                key=f"c_mgmt_{run_id}",
+            )
+        else:
+          st.info("Unterschriften-Canvas im Web-Modus vereinfacht.")
+
+        if st.button(
+            "🏁 Begehung jetzt erfolgreich abschließen", type="primary"
+        ):
+          conn.execute(
+              "UPDATE inspection_runs SET status = 'ABGESCHLOSSEN' WHERE id ="
+              " ?",
+              (run_id,),
+          )
+          conn.commit()
+          st.session_state["active_run_id"] = None
+          st.success(
+              "Begehung erfolgreich abgeschlossen und im Brandschutzbuch"
+              " archiviert!"
+          )
+          st.rerun()
 
 
 # ----------------------------------------------------
@@ -466,7 +587,7 @@ elif menu == "Aktive Begehung & Planprüfung":
 # ----------------------------------------------------
 elif menu == "📷 Live-Kamera QR-Scanner":
   st.subheader("📷 Live-Kamera QR-Code-Scanner")
-  st.info("QR-Scanner im Web-Modus bereit.")
+  st.info("QR-Scanner im Web-Modus aktiv.")
 
 
 # ----------------------------------------------------
@@ -490,7 +611,7 @@ elif menu == "Anlagenkataster & Fristen":
 # ----------------------------------------------------
 elif menu == "🏷️ QR-Code Etikettendruck":
   st.subheader("🏷️ QR-Code Etikettendruck")
-  st.info("Etikettendruck über Kataster verfügbar.")
+  st.info("Wähle im Kataster Geräte aus.")
 
 
 # ----------------------------------------------------
@@ -516,7 +637,7 @@ elif menu == "🚨 Ereignisjournal (TRVB 117 O)":
 # ----------------------------------------------------
 elif menu == "📊 BSB-Jahresbericht (TRVB 117 O)":
   st.subheader("📊 BSB-Jahresbericht")
-  st.info("Berichte über das Hauptmenü aufrufbar.")
+  st.info("Management-Bericht verfügbar.")
 
 
 # ----------------------------------------------------
@@ -547,12 +668,12 @@ elif menu == "Brandschutzbuch-Historie":
 
 
 # ----------------------------------------------------
-# 11. PLÄNE & OBJEKTE VERWALTEN (HIER WIRD ANGELEGT & HOCHGELADEN)
+# 11. PLÄNE & OBJEKTE VERWALTEN (OBJEKTE ANLEGEN & PLÄNE HOCHLADEN)
 # ----------------------------------------------------
 elif menu == "Pläne & Objekte verwalten":
   tab_p1, tab_p2, tab_p3 = st.tabs([
       "🏢 1. Liegenschaften verwalten",
-      "🗺️ 2. Geschosspläne hochladen",
+      "🗺️ 2. Geschosspläne hochladen (PDF / Bild)",
       "➕ 3. Neues Objekt anlegen",
   ])
 
@@ -563,7 +684,10 @@ elif menu == "Pläne & Objekte verwalten":
       st.info("Noch keine Objekte vorhanden. Lege unter Tab 3 ein Objekt an.")
     else:
       for p in properties:
-        st.write(f"🏢 **{p['name']}** – {p['address']} (BSB: {p['fire_safety_officer']})")
+        st.write(
+            f"🏢 **{p['name']}** – {p['address']} (BSB:"
+            f" {p['fire_safety_officer']})"
+        )
 
   with tab_p2:
     st.subheader("Grundrissplan hochladen (PDF, PNG, JPG)")
@@ -572,13 +696,17 @@ elif menu == "Pläne & Objekte verwalten":
       st.warning("Bitte zuerst unter Tab 3 ein Objekt anlegen.")
     else:
       prop_dict = {f"{p['name']} ({p['address']})": p["id"] for p in properties}
-      sel_p = st.selectbox("Objekt für Plan-Upload auswählen", list(prop_dict.keys()))
+      sel_p = st.selectbox(
+          "Objekt für Plan-Upload auswählen", list(prop_dict.keys())
+      )
       target_id = prop_dict[sel_p]
 
       with st.form("upload_plan_form", clear_on_submit=True):
         p_name = st.text_input("Planbezeichnung (z.B. Erdgeschoss)")
-        p_file = st.file_uploader("Datei auswählen", type=["pdf", "png", "jpg", "jpeg"])
-        
+        p_file = st.file_uploader(
+            "Datei auswählen", type=["pdf", "png", "jpg", "jpeg"]
+        )
+
         if st.form_submit_button("Plan speichern", type="primary"):
           if p_name and p_file:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -595,7 +723,10 @@ elif menu == "Pläne & Objekte verwalten":
                 pix.save(full_path)
                 doc.close()
               else:
-                st.error("PDF-Konvertierung nicht aktiv. Bitte lade den Plan als PNG oder JPG hoch.")
+                st.error(
+                    "PDF-Konvertierung nicht aktiv. Bitte lade den Plan als PNG"
+                    " oder JPG hoch."
+                )
                 st.stop()
             else:
               saved_filename = f"plan_{target_id}_{timestamp}{file_ext}"
@@ -604,8 +735,9 @@ elif menu == "Pläne & Objekte verwalten":
                 f.write(p_file.getbuffer())
 
             conn.execute(
-                "INSERT INTO floor_plans (property_id, name, image_path) VALUES (?, ?, ?)",
-                (target_id, p_name, full_path)
+                "INSERT INTO floor_plans (property_id, name, image_path) VALUES"
+                " (?, ?, ?)",
+                (target_id, p_name, full_path),
             )
             conn.commit()
             st.success(f"Plan '{p_name}' erfolgreich hochgeladen!")
@@ -618,13 +750,16 @@ elif menu == "Pläne & Objekte verwalten":
     with st.form("new_prop_form", clear_on_submit=True):
       name = st.text_input("Objektname / Liegenschaft*")
       address = st.text_input("Adresse*")
-      bsb = st.text_input("Zuständiger Brandschutzbeauftragter", value="Johannes Probst")
-      
+      bsb = st.text_input(
+          "Zuständiger Brandschutzbeauftragter", value="Johannes Probst"
+      )
+
       if st.form_submit_button("Objekt jetzt anlegen", type="primary"):
         if name and address:
           conn.execute(
-              "INSERT INTO properties (name, address, fire_safety_officer) VALUES (?, ?, ?)",
-              (name, address, bsb)
+              "INSERT INTO properties (name, address, fire_safety_officer)"
+              " VALUES (?, ?, ?)",
+              (name, address, bsb),
           )
           conn.commit()
           st.success(f"Objekt '{name}' erfolgreich angelegt!")
