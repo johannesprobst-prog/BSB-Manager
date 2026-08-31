@@ -8,9 +8,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 import qrcode
 
 from reportlab.lib import colors
@@ -29,7 +26,7 @@ from reportlab.platypus import (
 
 import fitz  # PyMuPDF für PDF-Pläne
 
-# UI-Erweiterungen (Canvas & Koordinaten) sicher absichern
+# Alle potenziellen Cloud-Pakete sicher absichern
 try:
   from streamlit_drawable_canvas import st_canvas
   HAS_CANVAS = True
@@ -41,6 +38,14 @@ try:
   HAS_COORDS = True
 except ImportError:
   HAS_COORDS = False
+
+try:
+  import openpyxl
+  from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+  from openpyxl.utils import get_column_letter
+  HAS_EXCEL = True
+except ImportError:
+  HAS_EXCEL = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -673,6 +678,8 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
 
 # --- EXCEL GENERATOR ---
 def generate_excel_export(property_id=None):
+  if not HAS_EXCEL:
+    return None
   conn = get_db()
   wb = openpyxl.Workbook()
 
@@ -1388,8 +1395,9 @@ def generate_combined_pdf(run_id):
   s_table = Table(sign_data, colWidths=[90 * mm, 90 * mm])
   s_table.setStyle(
       TableStyle([
-          ("VALIGN", (0, 0), (-1, -1), "TOP"),
+          ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
           ("LEFTPADDING", (0, 0), (-1, -1), 0),
+          ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
       ])
   )
   elements.append(s_table)
@@ -1697,10 +1705,7 @@ if menu == "🎨 Objektpläne & Kataster bearbeiten":
                 d_img, key=f"edit_coords_{selected_plan_id}"
             )
           else:
-            st.error(
-                "Koordinaten-Erweiterung (`streamlit-image-coordinates`) nicht"
-                " aktiv."
-            )
+            st.error("Koordinaten-Modul nicht aktiv.")
             edit_coords = None
 
         with col_plan_form:
@@ -2689,7 +2694,7 @@ elif menu == "🛠️ Handwerker- & Mängelauftrag":
     ).fetchall()
 
     if not defects:
-      st.success("🎉 Keine offenen Mängel für dieses Objekt vorhanden!")
+      st.success("🎉 Keine offenen Mängel für diesen Objekt vorhanden!")
     else:
       st.info(f"Es liegen **{len(defects)} offene Mängel** vor.")
 
@@ -3169,38 +3174,43 @@ elif menu == "💾 Daten-Export & Datensicherung":
 
   with tab_exp:
     st.markdown("#### Strukturierter Excel-Export")
-    properties = conn.execute("SELECT * FROM properties").fetchall()
-
-    if not properties:
-      st.warning("Keine Objekte vorhanden.")
+    if not HAS_EXCEL:
+      st.error(
+          "⚠️ Das Paket `openpyxl` ist nicht aktiv. Nutze den ZIP-Backup-Export."
+      )
     else:
-      prop_dict = {"Alle Objekte (Gesamtexport)": None}
-      for p in properties:
-        prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
+      properties = conn.execute("SELECT * FROM properties").fetchall()
 
-      sel_p_label = st.selectbox(
-          "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
-      )
-      target_pid = prop_dict[sel_p_label]
+      if not properties:
+        st.warning("Keine Objekte vorhanden.")
+      else:
+        prop_dict = {"Alle Objekte (Gesamtexport)": None}
+        for p in properties:
+          prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
 
-      excel_data = generate_excel_export(target_pid)
-      file_name_suffix = (
-          "Gesamtexport"
-          if target_pid is None
-          else sel_p_label.split(" ")[0].replace("/", "_")
-      )
+        sel_p_label = st.selectbox(
+            "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
+        )
+        target_pid = prop_dict[sel_p_label]
 
-      st.download_button(
-          label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
-          data=excel_data,
-          file_name=(
-              f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
-          ),
-          mime=(
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          ),
-          type="primary",
-      )
+        excel_data = generate_excel_export(target_pid)
+        file_name_suffix = (
+            "Gesamtexport"
+            if target_pid is None
+            else sel_p_label.split(" ")[0].replace("/", "_")
+        )
+
+        st.download_button(
+            label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
+            data=excel_data,
+            file_name=(
+                f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
+            ),
+            mime=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            type="primary",
+        )
 
   with tab_bak:
     st.markdown("#### 1-Klick-Vollsicherung herunterladen")
@@ -3429,7 +3439,7 @@ elif menu == "Pläne & Objekte verwalten":
 
         if st.form_submit_button("Plan speichern", type="primary"):
           if plan_name and plan_file:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             file_ext = os.path.splitext(plan_file.name)[1].lower()
 
             if file_ext == ".pdf":
