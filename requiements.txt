@@ -1,0 +1,11 @@
+streamlit
+streamlit-drawable-canvas
+streamlit-image-coordinates
+reportlab
+PyMuPDF
+Pillow
+openpyxl
+pandas
+qrcode
+opencv-python-headless
+numpy
