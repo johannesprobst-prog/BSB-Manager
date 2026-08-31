@@ -10,6 +10,11 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+import qrcode
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -24,32 +29,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-# Optionale Imports sicher abfangen, damit die Cloud-App niemals abstürzt
-try:
-  import fitz  # PyMuPDF
-  HAS_FITZ = True
-except ImportError:
-  HAS_FITZ = False
-
-try:
-  import cv2
-  HAS_CV2 = True
-except ImportError:
-  HAS_CV2 = False
-
-try:
-  import openpyxl
-  from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-  from openpyxl.utils import get_column_letter
-  HAS_EXCEL = True
-except ImportError:
-  HAS_EXCEL = False
-
-try:
-  import qrcode
-  HAS_QR = True
-except ImportError:
-  HAS_QR = False
+import fitz  # PyMuPDF für PDF-Pläne
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -259,21 +239,6 @@ def draw_color_dot(
   )
   if label:
     draw.text((x - 4, y - 6), str(label), fill="white")
-
-
-def decode_qr_image(image_bytes):
-  if not HAS_CV2:
-    return None
-  try:
-    file_bytes = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    detector = cv2.QRCodeDetector()
-    data, bbox, _ = detector.detectAndDecode(img)
-    if data:
-      return data
-  except Exception:
-    pass
-  return None
 
 
 # --- PDF GENERATOR FÜR BSB-JAHRESBERICHT ---
@@ -510,7 +475,7 @@ def generate_annual_report_pdf(property_id, report_year, bsb_summary_text):
 
   elements.append(
       Paragraph(
-          "3. Gesamtbeurteilung du baulichen & organisatorischen"
+          "3. Gesamtbeurteilung des baulichen & organisatorischen"
           " Brandschutzes",
           h2_style,
       )
@@ -545,7 +510,7 @@ def generate_annual_report_pdf(property_id, report_year, bsb_summary_text):
       ),
       Paragraph(
           "____________________________________________<br/>Kenntnisnahme"
-          " Geschäftsleitung / Betriebsführung",
+          " Betriebsleitung / Eigentümer",
           td_style,
       ),
   ]]
@@ -617,24 +582,21 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
   label_cells = []
 
   for f in facilities:
-    if HAS_QR:
-      qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
-      qr = qrcode.QRCode(
-          version=1,
-          error_correction=qrcode.constants.ERROR_CORRECT_M,
-          box_size=4,
-          border=1,
-      )
-      qr.add_data(qr_payload)
-      qr.make(fit=True)
-      qr_img = qr.make_image(fill_color="black", back_color="white")
+    qr_payload = f"BSB-GERAET|ID:{f['id']}|IDENT:{f['identifier']}|CAT:{f['category']}|OBJ:{prop['name']}"
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=4,
+        border=1,
+    )
+    qr.add_data(qr_payload)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="black", back_color="white")
 
-      qr_byte_arr = io.BytesIO()
-      qr_img.save(qr_byte_arr, format="PNG")
-      qr_byte_arr.seek(0)
-      rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
-    else:
-      rl_qr = Paragraph("<b>[QR]</b>", label_text_style)
+    qr_byte_arr = io.BytesIO()
+    qr_img.save(qr_byte_arr, format="PNG")
+    qr_byte_arr.seek(0)
+    rl_qr = RLImage(qr_byte_arr, width=22 * mm, height=22 * mm)
 
     frist_str = (
         f"Prüfung: {f['next_inspection']}"
@@ -700,8 +662,6 @@ def generate_qr_labels_pdf(property_id, selected_ids=None):
 
 # --- EXCEL GENERATOR ---
 def generate_excel_export(property_id=None):
-  if not HAS_EXCEL:
-    return None
   conn = get_db()
   wb = openpyxl.Workbook()
 
@@ -2436,166 +2396,15 @@ elif menu == "Aktive Begehung & Planprüfung":
 
 
 # ----------------------------------------------------
-# 3. LIVE-KAMERA QR-SCANNER
+# 3. LIVE-KAMERA QR-SCANNER (ENTFERNT UM ABSTÜRZE ZU VERHINDERN)
 # ----------------------------------------------------
 elif menu == "📷 Live-Kamera QR-Scanner":
   st.subheader("📷 Live-Kamera QR-Code-Scanner")
-  if not HAS_CV2:
-    st.error(
-        "⚠️ Das OpenCV-Paket (`cv2`) ist in dieser Cloud-Umgebung nicht aktiv."
-        " Bitte nutze die reguläre Begehung oder erfasse Mängel über das"
-        " Kataster."
-    )
-  else:
-    st.caption(
-        "Scanne einen QR-Code-Aufkleber direkt mit der Smartphone-, Tablet-"
-        " oder Laptop-Kamera, um das Gerät sofort zu prüfen oder einen Mangel"
-        " festzuhalten."
-    )
-
-    cam_img = st.camera_input("Kamera auf den QR-Code am Gerät richten:")
-
-    if cam_img is not None:
-      qr_data = decode_qr_image(cam_img.getvalue())
-
-      if qr_data and qr_data.startswith("BSB-GERAET|"):
-        parts = dict(
-            item.split(":", 1)
-            for item in qr_data.split("|")[1:]
-            if ":" in item
-        )
-        fac_id = parts.get("ID")
-
-        if fac_id:
-          facility = conn.execute(
-              """
-                      SELECT f.*, p.name as prop_name, fp.name as plan_name 
-                      FROM fire_facilities f
-                      JOIN properties p ON f.property_id = p.id
-                      LEFT JOIN floor_plans fp ON f.floor_plan_id = fp.id
-                      WHERE f.id = ?
-                  """,
-              (fac_id,),
-          ).fetchone()
-
-          if facility:
-            st.success(
-                f"✅ **Erkannt: {facility['identifier']} ({facility['category']})**"
-                f" – Objekt: {facility['prop_name']}"
-            )
-
-            c1, c2 = st.columns([2, 2])
-            c1.write(f"**Standort:** {facility['location_desc']}")
-            c1.write(f"**Typ:** {facility['device_type'] or '-'}")
-            c1.write(f"**Plan:** {facility['plan_name'] or 'Nicht verortet'}")
-
-            c2.write(f"**Letzte Prüfung:** {facility['last_inspection']}")
-            c2.write(f"**Nächste Fälligkeit:** `{facility['next_inspection']}`")
-            c2.write(
-                f"**Status:**"
-                f" :{'red[MANGEL]' if facility['has_defect'] else 'green[GÜLTIG / I.O.]'}"
-            )
-
-            st.divider()
-            st.markdown("#### Sofort-Aktion für dieses Gerät:")
-
-            act_col1, act_col2 = st.columns(2)
-
-            with act_col1:
-              if facility["inspection_interval_months"] > 0:
-                if st.button(
-                    "🔄 Plakette erneuern (Prüffrist verlängern)",
-                    type="primary",
-                    key="cam_renew",
-                ):
-                  new_l = date.today()
-                  months = facility["inspection_interval_months"]
-                  new_n = (
-                      new_l.replace(year=new_l.year + (months // 12))
-                      if months % 12 == 0
-                      else new_l + timedelta(days=months * 30)
-                  )
-                  conn.execute(
-                      """
-                                      UPDATE fire_facilities 
-                                      SET last_inspection = ?, next_inspection = ?, has_defect = 0 
-                                      WHERE id = ?
-                                  """,
-                      (
-                          new_l.strftime("%Y-%m-%d"),
-                          new_n.strftime("%Y-%m-%d"),
-                          facility["id"],
-                      ),
-                  )
-                  conn.commit()
-                  st.success(f"Prüfung aktualisiert bis: {new_n}")
-                  st.rerun()
-              else:
-                if st.button(
-                    "✅ Sichtprüfung i.O. bestätigen",
-                    type="primary",
-                    key="cam_sicht",
-                ):
-                  conn.execute(
-                      "UPDATE fire_facilities SET has_defect = 0 WHERE id = ?",
-                      (facility["id"],),
-                  )
-                  conn.commit()
-                  st.success("Gerät in Ordnung!")
-                  st.rerun()
-
-            with act_col2:
-              if facility["has_defect"]:
-                if st.button(
-                    "✅ Vorhandenen Mangel als behoben verbuchen", key="cam_fix"
-                ):
-                  conn.execute(
-                      """
-                                      UPDATE fire_facilities 
-                                      SET has_defect = 0, defect_description = NULL 
-                                      WHERE id = ?
-                                  """,
-                      (facility["id"],),
-                  )
-                  conn.commit()
-                  st.success("Mangel behoben!")
-                  st.rerun()
-
-            with st.form("cam_defect_form"):
-              st.markdown("##### ⚠️ Mangel für dieses Gerät erfassen")
-              m_desc = st.text_input(
-                  "Mangelbeschreibung",
-                  placeholder="z.B. Löscher verstellt, Plombe fehlt, Tür klemmt",
-              )
-              m_sev = st.selectbox(
-                  "Dringlichkeit", ["MITTEL", "KRITISCH", "GERING"]
-              )
-              m_due = st.date_input("Behebungsfrist", value=date.today())
-
-              if st.form_submit_button("Mangel sofort abspeichern"):
-                if m_desc:
-                  conn.execute(
-                      """
-                                      UPDATE fire_facilities 
-                                      SET has_defect = 1, defect_description = ?, defect_severity = ?, defect_due_date = ?
-                                      WHERE id = ?
-                                  """,
-                      (m_desc, m_sev, m_due, facility["id"]),
-                  )
-                  conn.commit()
-                  st.success("Mangel am Gerät hinterlegt!")
-                  st.rerun()
-                else:
-                  st.error("Bitte Mangelbeschreibung eingeben.")
-          else:
-            st.error(
-                "Geräte-ID aus dem QR-Code nicht in der Datenbank gefunden."
-            )
-      else:
-        st.warning(
-            "Kein gültiger BSB-QR-Code erkannt. Bitte die Kamera ruhig auf das"
-            " Etikett halten."
-        )
+  st.info(
+      "Der Live-Kamera-Scan wurde für den Web-Betrieb aufgrund von"
+      " Cloud-Schnittstellen deaktiviert. Nutze für Begehungen die"
+      " 'Aktive Begehung & Planprüfung' oder das Anlagenkataster."
+  )
 
 
 # ----------------------------------------------------
@@ -3333,44 +3142,38 @@ elif menu == "💾 Daten-Export & Datensicherung":
 
   with tab_exp:
     st.markdown("#### Strukturierter Excel-Export")
-    if not HAS_EXCEL:
-      st.error(
-          "⚠️ Das Paket `openpyxl` ist in dieser Cloud-Umgebung nicht aktiv."
-          " Nutze stattdessen den ZIP-Backup-Export."
-      )
+    properties = conn.execute("SELECT * FROM properties").fetchall()
+
+    if not properties:
+      st.warning("Keine Objekte vorhanden.")
     else:
-      properties = conn.execute("SELECT * FROM properties").fetchall()
+      prop_dict = {"Alle Objekte (Gesamtexport)": None}
+      for p in properties:
+        prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
 
-      if not properties:
-        st.warning("Keine Objekte vorhanden.")
-      else:
-        prop_dict = {"Alle Objekte (Gesamtexport)": None}
-        for p in properties:
-          prop_dict[f"{p['name']} ({p['address']})"] = p["id"]
+      sel_p_label = st.selectbox(
+          "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
+      )
+      target_pid = prop_dict[sel_p_label]
 
-        sel_p_label = st.selectbox(
-            "Umfang für Excel-Export auswählen:", list(prop_dict.keys())
-        )
-        target_pid = prop_dict[sel_p_label]
+      excel_data = generate_excel_export(target_pid)
+      file_name_suffix = (
+          "Gesamtexport"
+          if target_pid is None
+          else sel_p_label.split(" ")[0].replace("/", "_")
+      )
 
-        excel_data = generate_excel_export(target_pid)
-        file_name_suffix = (
-            "Gesamtexport"
-            if target_pid is None
-            else sel_p_label.split(" ")[0].replace("/", "_")
-        )
-
-        st.download_button(
-            label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
-            data=excel_data,
-            file_name=(
-                f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
-            ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            type="primary",
-        )
+      st.download_button(
+          label="📊 Excel-Arbeitsmappe (.xlsx) herunterladen",
+          data=excel_data,
+          file_name=(
+              f"Brandschutz_Export_{file_name_suffix}_{date.today().strftime('%Y%m%d')}.xlsx"
+          ),
+          mime=(
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          ),
+          type="primary",
+      )
 
   with tab_bak:
     st.markdown("#### 1-Klick-Vollsicherung herunterladen")
@@ -3604,20 +3407,13 @@ elif menu == "Pläne & Objekte verwalten":
 
             if file_ext == ".pdf":
               pdf_bytes = plan_file.read()
-              if HAS_FITZ:
-                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                page = doc.load_page(0)
-                pix = page.get_pixmap(dpi=200)
-                saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
-                full_path = os.path.join(UPLOAD_DIR, saved_filename)
-                pix.save(full_path)
-                doc.close()
-              else:
-                st.error(
-                    "PDF-Konvertierung in dieser Umgebung nicht aktiv. Bitte"
-                    " lade den Plan als PNG- oder JPG-Bild hoch."
-                )
-                st.stop()
+              doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+              page = doc.load_page(0)
+              pix = page.get_pixmap(dpi=200)
+              saved_filename = f"plan_{target_prop_id}_{timestamp}.png"
+              full_path = os.path.join(UPLOAD_DIR, saved_filename)
+              pix.save(full_path)
+              doc.close()
             else:
               saved_filename = f"plan_{target_prop_id}_{timestamp}{file_ext}"
               full_path = os.path.join(UPLOAD_DIR, saved_filename)
@@ -3651,7 +3447,7 @@ elif menu == "Pläne & Objekte verwalten":
       ).fetchall()
 
       if not existing_plans:
-        st.info("Keine Pläne für dieses Objekt hinterlegt.")
+        st.info("Noch keine Pläne für dieses Objekt hinterlegt.")
       else:
         for pl in existing_plans:
           col_pl1, col_pl2 = st.columns([7, 3])
