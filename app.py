@@ -10,7 +10,7 @@ import streamlit as st
 
 # --- SICHERE CLOUD-IMPORTS (Verhindern jegliche Abstürze) ---
 try:
-  import fitz  # PyMuPDF
+  import fitz  # PyMuPDF für PDF-Pläne
   HAS_FITZ = True
 except ImportError:
   HAS_FITZ = False
@@ -35,19 +35,23 @@ try:
 except ImportError:
   HAS_QR = False
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import (
-    Image as RLImage,
-    KeepTogether,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+try:
+  from reportlab.lib import colors
+  from reportlab.lib.pagesizes import A4
+  from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+  from reportlab.lib.units import mm
+  from reportlab.platypus import (
+      Image as RLImage,
+      KeepTogether,
+      Paragraph,
+      SimpleDocTemplate,
+      Spacer,
+      Table,
+      TableStyle,
+  )
+  HAS_REPORTLAB = True
+except ImportError:
+  HAS_REPORTLAB = False
 
 try:
   from streamlit_drawable_canvas import st_canvas
@@ -288,6 +292,8 @@ def decode_qr_image(image_bytes):
 
 # --- PDF GENERATOR FÜR BSB-JAHRESBERICHT ---
 def generate_annual_report_pdf(property_id, report_year, bsb_summary_text):
+  if not HAS_REPORTLAB:
+    return b""
   conn = get_db()
   prop = conn.execute(
       "SELECT * FROM properties WHERE id = ?", (property_id,)
@@ -575,6 +581,8 @@ def generate_annual_report_pdf(property_id, report_year, bsb_summary_text):
 
 # --- QR-CODE ETIKETTENBOGEN GENERATOR ---
 def generate_qr_labels_pdf(property_id, selected_ids=None):
+  if not HAS_REPORTLAB:
+    return b""
   conn = get_db()
   prop = conn.execute(
       "SELECT * FROM properties WHERE id = ?", (property_id,)
@@ -846,6 +854,8 @@ def restore_backup_from_zip(zip_bytes):
 
 # --- PDF Generator für Handwerker-Mängelauftrag ---
 def generate_handwerker_pdf(property_id, selected_defect_ids=None):
+  if not HAS_REPORTLAB:
+    return b""
   conn = get_db()
   prop = conn.execute(
       "SELECT * FROM properties WHERE id = ?", (property_id,)
@@ -1089,6 +1099,8 @@ def generate_handwerker_pdf(property_id, selected_defect_ids=None):
 
 # --- PDF Generator für Begehungsprotokoll ---
 def generate_combined_pdf(run_id):
+  if not HAS_REPORTLAB:
+    return b""
   conn = get_db()
   run = conn.execute(
       """
@@ -1441,6 +1453,8 @@ def generate_combined_pdf(run_id):
 
 # --- PDF Generator für TRVB 117 O Ereignisjournal ---
 def generate_journal_pdf(property_id):
+  if not HAS_REPORTLAB:
+    return b""
   conn = get_db()
   prop = conn.execute(
       "SELECT * FROM properties WHERE id = ?", (property_id,)
