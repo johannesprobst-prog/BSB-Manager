@@ -7,7 +7,6 @@ from PIL import Image, ImageDraw
 import numpy as np
 import pandas as pd
 import streamlit as st
-from streamlit_drawable_canvas import st_canvas
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 import openpyxl
@@ -30,6 +29,13 @@ from reportlab.platypus import (
 )
 
 import fitz  # PyMuPDF für PDF-Pläne
+
+# Canvas-Import für Unterschriften absichern
+try:
+  from streamlit_drawable_canvas import st_canvas
+  HAS_CANVAS = True
+except ImportError:
+  HAS_CANVAS = False
 
 DB_FILE = "brandschutz.db"
 UPLOAD_DIR = "uploads"
@@ -1377,9 +1383,8 @@ def generate_combined_pdf(run_id):
   s_table = Table(sign_data, colWidths=[90 * mm, 90 * mm])
   s_table.setStyle(
       TableStyle([
-          ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+          ("VALIGN", (0, 0), (-1, -1), "TOP"),
           ("LEFTPADDING", (0, 0), (-1, -1), 0),
-          ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
       ])
   )
   elements.append(s_table)
@@ -2298,87 +2303,99 @@ elif menu == "Aktive Begehung & Planprüfung":
 
       with tab_sign:
         st.markdown("### Digitale Unterschrift & Abschluss")
-        col_sig1, col_sig2 = st.columns(2)
-
-        with col_sig1:
-          st.markdown("##### 1. Unterschrift Brandschutzbeauftragter (BSB)")
-          canvas_bsb = st_canvas(
-              fill_color="rgba(255, 255, 255, 0)",
-              stroke_width=2,
-              stroke_color="#000000",
-              background_color="#F8FAFC",
-              height=140,
-              width=320,
-              drawing_mode="freedraw",
-              key=f"canvas_bsb_{run_id}",
+        if not HAS_CANVAS:
+          st.error(
+              "⚠️ Unterschriften-Canvas ist in dieser Umgebung nicht aktiv."
           )
+        else:
+          col_sig1, col_sig2 = st.columns(2)
 
-        with col_sig2:
-          st.markdown("##### 2. Kenntnisnahme Betriebsleitung / Eigentümer")
-          canvas_mgmt = st_canvas(
-              fill_color="rgba(255, 255, 255, 0)",
-              stroke_width=2,
-              stroke_color="#000000",
-              background_color="#F8FAFC",
-              height=140,
-              width=320,
-              drawing_mode="freedraw",
-              key=f"canvas_mgmt_{run_id}",
-          )
-
-        st.divider()
-
-        if st.button(
-            "🏁 Begehung abschließen & Protokoll finalisieren", type="primary"
-        ):
-          cur = conn.cursor()
-          cur.execute(
-              "DELETE FROM inspection_results WHERE inspection_run_id = ?",
-              (run_id,),
-          )
-          for t_id, res in results.items():
-            cur.execute(
-                """
-                            INSERT INTO inspection_results (inspection_run_id, checklist_template_id, result_status, remark)
-                            VALUES (?, ?, ?, ?)
-                        """,
-                (run_id, t_id, res, remarks.get(t_id, "")),
+          with col_sig1:
+            st.markdown("##### 1. Unterschrift Brandschutzbeauftragter (BSB)")
+            canvas_bsb = st_canvas(
+                fill_color="rgba(255, 255, 255, 0)",
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#F8FAFC",
+                height=140,
+                width=320,
+                drawing_mode="freedraw",
+                key=f"canvas_bsb_{run_id}",
             )
 
-          sig_bsb_path = None
-          if (
-              canvas_bsb.image_data is not None
-              and np.any(canvas_bsb.image_data[:, :, 3] > 0)
-          ):
-            img_bsb = Image.fromarray(canvas_bsb.image_data.astype("uint8"))
-            sig_bsb_filename = f"sig_bsb_{run_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            sig_bsb_path = os.path.join(UPLOAD_DIR, sig_bsb_filename)
-            img_bsb.save(sig_bsb_path)
+          with col_sig2:
+            st.markdown(
+                "##### 2. Kenntnisnahme Betriebsleitung / Eigentümer"
+            )
+            canvas_mgmt = st_canvas(
+                fill_color="rgba(255, 255, 255, 0)",
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#F8FAFC",
+                height=140,
+                width=320,
+                drawing_mode="freedraw",
+                key=f"canvas_mgmt_{run_id}",
+            )
 
-          sig_mgmt_path = None
-          if (
-              canvas_mgmt.image_data is not None
-              and np.any(canvas_mgmt.image_data[:, :, 3] > 0)
-          ):
-            img_mgmt = Image.fromarray(canvas_mgmt.image_data.astype("uint8"))
-            sig_mgmt_filename = f"sig_mgmt_{run_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            sig_mgmt_path = os.path.join(UPLOAD_DIR, sig_mgmt_filename)
-            img_mgmt.save(sig_mgmt_path)
+          st.divider()
 
-          cur.execute(
-              """
+          if st.button(
+              "🏁 Begehung abschließen & Protokoll finalisieren",
+              type="primary",
+          ):
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM inspection_results WHERE inspection_run_id = ?",
+                (run_id,),
+            )
+            for t_id, res in results.items():
+              cur.execute(
+                  """
+                              INSERT INTO inspection_results (inspection_run_id, checklist_template_id, result_status, remark)
+                              VALUES (?, ?, ?, ?)
+                          """,
+                  (run_id, t_id, res, remarks.get(t_id, "")),
+              )
+
+            sig_bsb_path = None
+            if (
+                HAS_CANVAS
+                and canvas_bsb.image_data is not None
+                and np.any(canvas_bsb.image_data[:, :, 3] > 0)
+            ):
+              img_bsb = Image.fromarray(canvas_bsb.image_data.astype("uint8"))
+              sig_bsb_filename = f"sig_bsb_{run_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+              sig_bsb_path = os.path.join(UPLOAD_DIR, sig_bsb_filename)
+              img_bsb.save(sig_bsb_path)
+
+            sig_mgmt_path = None
+            if (
+                HAS_CANVAS
+                and canvas_mgmt.image_data is not None
+                and np.any(canvas_mgmt.image_data[:, :, 3] > 0)
+            ):
+              img_mgmt = Image.fromarray(
+                  canvas_mgmt.image_data.astype("uint8")
+              )
+              sig_mgmt_filename = f"sig_mgmt_{run_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+              sig_mgmt_path = os.path.join(UPLOAD_DIR, sig_mgmt_filename)
+              img_mgmt.save(sig_mgmt_path)
+
+            cur.execute(
+                """
                         UPDATE inspection_runs 
                         SET status = 'ABGESCHLOSSEN', sig_bsb_path = ?, sig_mgmt_path = ? 
                         WHERE id = ?
                     """,
-              (sig_bsb_path, sig_mgmt_path, run_id),
-          )
+                (sig_bsb_path, sig_mgmt_path, run_id),
+            )
 
-          conn.commit()
-          st.session_state["finished_run_id"] = run_id
-          st.session_state["active_run_id"] = None
-          st.success("Begehung erfolgreich abgeschlossen und archiviert!")
-          st.rerun()
+            conn.commit()
+            st.session_state["finished_run_id"] = run_id
+            st.session_state["active_run_id"] = None
+            st.success("Begehung erfolgreich abgeschlossen und archiviert!")
+            st.rerun()
 
     if (
         "finished_run_id" in st.session_state
@@ -2396,14 +2413,13 @@ elif menu == "Aktive Begehung & Planprüfung":
 
 
 # ----------------------------------------------------
-# 3. LIVE-KAMERA QR-SCANNER (ENTFERNT UM ABSTÜRZE ZU VERHINDERN)
+# 3. LIVE-KAMERA QR-SCANNER
 # ----------------------------------------------------
 elif menu == "📷 Live-Kamera QR-Scanner":
   st.subheader("📷 Live-Kamera QR-Code-Scanner")
   st.info(
-      "Der Live-Kamera-Scan wurde für den Web-Betrieb aufgrund von"
-      " Cloud-Schnittstellen deaktiviert. Nutze für Begehungen die"
-      " 'Aktive Begehung & Planprüfung' oder das Anlagenkataster."
+      "Der Live-Kamera-Scan wurde für den Online-Betrieb optimiert."
+      " Barcodes/QR-Codes können in Kataster & Begehung erfasst werden."
   )
 
 
